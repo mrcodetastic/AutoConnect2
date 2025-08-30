@@ -163,20 +163,12 @@ class AutoConnectAux : public PageBuilder {
   bool _parseJson(T in, const size_t size) {
     AC_UNUSED(size);
     ArduinoJsonBuffer jsonBuffer(AUTOCONNECT_JSONBUFFER_PRIMITIVE_SIZE);
-  #if ARDUINOJSON_VERSION_MAJOR<=5
-    JsonObject& jb = jsonBuffer.parseObject(in);
-    if (!jb.success()) {
-      AC_DBG("JSON parse error\n");
-      return false;
-    }
-  #else
     DeserializationError  err = deserializeJson(jsonBuffer, in);
     if (err) {
       AC_DBG("Deserialize:%s\n", err.c_str());
       return false;
     }
     JsonObject jb = jsonBuffer.as<JsonObject>();
-  #endif
     return _load(jb);
   }
 
@@ -192,20 +184,12 @@ class AutoConnectAux : public PageBuilder {
   bool _parseElement(T in, U name, const size_t size) {
     ArduinoJsonBuffer jsonBuffer(size);
     JsonVariant jb;
-  #if ARDUINOJSON_VERSION_MAJOR<=5
-    jb = jsonBuffer.parse(in);
-    if (!jb.success()) {
-      AC_DBG("JSON parse error\n");
-      return false;
-    }
-  #else
     DeserializationError  err = deserializeJson(jsonBuffer, in);
     if (err) {
       AC_DBG("Deserialize:%s\n", err.c_str());
       return false;
     }
     jb = jsonBuffer.as<JsonVariant>();
-  #endif
     return _loadElement(jb, name);
   }
 #endif // !AUTOCONNECT_USE_JSON

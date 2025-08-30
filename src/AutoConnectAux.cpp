@@ -926,7 +926,7 @@ void AutoConnectAux::_storeElements(WebServer* webServer) {
  */
 AutoConnectElement* AutoConnectAux::_createElement(const JsonObject& json) {
   AutoConnectElement* elm = nullptr;
-  String  type = json[F(AUTOCONNECT_JSON_KEY_TYPE)].as<String>();
+  String  type = AutoConnectJson::getJsonValue(json, AUTOCONNECT_JSON_KEY_TYPE, String());
 
   switch (_asElementType(type)) {
   case AC_Element:
@@ -1036,27 +1036,27 @@ bool AutoConnectAux::load(Stream& in, const size_t size) {
  * @return false loading unsuccessful, JSON parsing error occurred.
  */
 bool AutoConnectAux::_load(JsonObject& jb) {
-  if (jb.containsKey(F(AUTOCONNECT_JSON_KEY_TITLE)))
-    _title = jb[F(AUTOCONNECT_JSON_KEY_TITLE)].as<String>();
-  if (jb.containsKey(F(AUTOCONNECT_JSON_KEY_URI)))
-    _uri = jb[F(AUTOCONNECT_JSON_KEY_URI)].as<String>();
+  if (AutoConnectJson::hasJsonKey(jb, AUTOCONNECT_JSON_KEY_TITLE))
+    _title = AutoConnectJson::getJsonValue(jb, AUTOCONNECT_JSON_KEY_TITLE, String());
+  if (AutoConnectJson::hasJsonKey(jb, AUTOCONNECT_JSON_KEY_URI))
+    _uri = AutoConnectJson::getJsonValue(jb, AUTOCONNECT_JSON_KEY_URI, String());
   else if (!_uri.length()) {
     AC_DBG("Warn. %s loaded null %s\n", _title.c_str(), AUTOCONNECT_JSON_KEY_TITLE);
   }
-  if (jb.containsKey(F(AUTOCONNECT_JSON_KEY_CORS)))
-    _cors = jb[F(AUTOCONNECT_JSON_KEY_CORS)].as<bool>();
-  if (jb.containsKey(F(AUTOCONNECT_JSON_KEY_MENU)))
-    _menu = jb[F(AUTOCONNECT_JSON_KEY_MENU)].as<bool>();
-  if (jb.containsKey(F(AUTOCONNECT_JSON_KEY_RESPONSE)))
-    _responsive = jb[F(AUTOCONNECT_JSON_KEY_RESPONSE)].as<bool>();
-  String  auth = jb[F(AUTOCONNECT_JSON_KEY_AUTH)].as<String>();
+  if (AutoConnectJson::hasJsonKey(jb, AUTOCONNECT_JSON_KEY_CORS))
+    _cors = AutoConnectJson::getJsonValue(jb, AUTOCONNECT_JSON_KEY_CORS, false);
+  if (AutoConnectJson::hasJsonKey(jb, AUTOCONNECT_JSON_KEY_MENU))
+    _menu = AutoConnectJson::getJsonValue(jb, AUTOCONNECT_JSON_KEY_MENU, false);
+  if (AutoConnectJson::hasJsonKey(jb, AUTOCONNECT_JSON_KEY_RESPONSE))
+    _responsive = AutoConnectJson::getJsonValue(jb, AUTOCONNECT_JSON_KEY_RESPONSE, false);
+  String  auth = AutoConnectJson::getJsonValue(jb, AUTOCONNECT_JSON_KEY_AUTH, String());
   if (auth.equalsIgnoreCase(F(AUTOCONNECT_JSON_VALUE_BASIC)))
     _httpAuth = AC_AUTH_BASIC;
   else if (auth.equalsIgnoreCase(F(AUTOCONNECT_JSON_VALUE_DIGEST)))
     _httpAuth = AC_AUTH_DIGEST;
   if (auth.equalsIgnoreCase(F(AUTOCONNECT_JSON_VALUE_NONE)))
     _httpAuth = AC_AUTH_NONE;
-  if (jb.containsKey(F(AUTOCONNECT_JSON_KEY_ELEMENT))) {
+  if (AutoConnectJson::hasJsonKey(jb, AUTOCONNECT_JSON_KEY_ELEMENT)) {
     JsonVariant elements = jb[F(AUTOCONNECT_JSON_KEY_ELEMENT)];
     (void)_loadElement(elements, "");
   }
@@ -1119,7 +1119,7 @@ bool AutoConnectAux::_loadElement(JsonVariant& jb, const String& name) {
     for (ArduinoJsonObject  element : elements) {
       if (name.length()) {
         //Finds an element with the specified name in the JSON array and loads it.
-        if (!name.equalsIgnoreCase(element[F(AUTOCONNECT_JSON_KEY_NAME)].as<String>()))
+        if (!name.equalsIgnoreCase(AutoConnectJson::getJsonValue(element, AUTOCONNECT_JSON_KEY_NAME, String())))
           continue;
       }
       AutoConnectElement& elm = _loadElement(element, name);

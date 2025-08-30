@@ -15,17 +15,16 @@
 #include "AutoConnectRAII.h"
 
 /**
- * Returns JSON object size with safety checks.
- * @return  An object size for JsonBuffer.
+ * Returns JSON object size with improved estimation for ArduinoJson 7.
+ * @return  An estimated object size for JsonDocument.
  */
 size_t AutoConnectElementJson::getObjectSize(void) const {
-  // Check for potential overflow
-  size_t  size = JSON_OBJECT_SIZE(6);
-  size_t  baseSize = sizeof(AUTOCONNECT_JSON_KEY_NAME) + sizeof(AUTOCONNECT_JSON_KEY_TYPE) + 
-                     sizeof(AUTOCONNECT_JSON_KEY_VALUE) + sizeof(AUTOCONNECT_JSON_TYPE_ACELEMENT) + 
-                     sizeof(AUTOCONNECT_JSON_KEY_GLOBAL) + sizeof(AUTOCONNECT_JSON_KEY_POSTERIOR);
+  // ArduinoJson 7 uses dynamic allocation, so we provide reasonable estimates
+  size_t numObjects = 1; // Base object
+  size_t numArrays = 0;
+  size_t stringLength = 0;
   
-  // Safely add string lengths with overflow protection
+  // Calculate string lengths
   size_t nameLen = name.length();
   size_t valueLen = value.length();
   
@@ -33,46 +32,48 @@ size_t AutoConnectElementJson::getObjectSize(void) const {
     AC_DBG("Warning: Large string detected in JSON element - name:%u, value:%u\n", nameLen, valueLen);
   }
   
-  size += baseSize + nameLen + sizeof('\0') + valueLen + sizeof('\0');
+  stringLength += nameLen + valueLen;
+  stringLength += 64; // Constants and keys
   
-  size_t  postSize = 0;
+  // Add posterior tag string
   switch (post) {
   case AC_Tag_BR:
-    postSize = sizeof(AUTOCONNECT_JSON_VALUE_BR);
+    stringLength += strlen(AUTOCONNECT_JSON_VALUE_BR);
     break;
   case AC_Tag_P:
-    postSize = sizeof(AUTOCONNECT_JSON_VALUE_PAR);
+    stringLength += strlen(AUTOCONNECT_JSON_VALUE_PAR);
     break;
   case AC_Tag_DIV:
-    postSize = sizeof(AUTOCONNECT_JSON_VALUE_DIV);
+    stringLength += strlen(AUTOCONNECT_JSON_VALUE_DIV);
     break;
   case AC_Tag_None:
   default:
-    postSize = sizeof(AUTOCONNECT_JSON_VALUE_NONE);
+    stringLength += strlen(AUTOCONNECT_JSON_VALUE_NONE);
   }
-  size += postSize;
+  
+  size_t estimatedSize = AutoConnectJson::estimateJsonCapacity(numObjects, numArrays, stringLength);
   
   // Check for reasonable size limits
-  if (size > 8192) {
-    AC_DBG("Warning: Large JSON object size calculated: %u bytes\n", size);
+  if (estimatedSize > 8192) {
+    AC_DBG("Warning: Large JSON object size estimated: %u bytes\n", estimatedSize);
   }
   
-  return size;
+  return estimatedSize;
 }
 
 /**
- * Load an element member value from the JSON object with validation.
+ * Load an element member value from the JSON object with enhanced ArduinoJson 7 support.
  * @param  json  JSON object with the definition of AutoConnectElement.
  * @return true  AutoConnectElement loaded successfully
  * @return false Type of AutoConnectElement is mismatched or validation failed.
  */
 bool AutoConnectElementJson::loadMember(const JsonObject& json) {
-  if (!json.containsKey(F(AUTOCONNECT_JSON_KEY_TYPE))) {
+  if (!AutoConnectJson::hasJsonKey(json, AUTOCONNECT_JSON_KEY_TYPE)) {
     AC_DBG("JSON object missing required 'type' field\n");
     return false;
   }
   
-  String  type = json[F(AUTOCONNECT_JSON_KEY_TYPE)].as<String>();
+  String type = AutoConnectJson::getJsonValue(json, AUTOCONNECT_JSON_KEY_TYPE, String());
   if (type.equalsIgnoreCase(F(AUTOCONNECT_JSON_TYPE_ACELEMENT))) {
     AC_CHECK_MEMORY(2048); // Warn if memory is low
     
@@ -136,12 +137,12 @@ void AutoConnectElementJson::_serialize(ARDUINOJSON_OBJECT_REFMODIFY JsonObject&
  */
 bool AutoConnectElementJson::_setMember(const JsonObject& json) {
   // Validate and set name
-  if (!json.containsKey(F(AUTOCONNECT_JSON_KEY_NAME))) {
+  if (!AutoConnectJson::hasJsonKey(json, AUTOCONNECT_JSON_KEY_NAME)) {
     AC_DBG("JSON object missing required 'name' field\n");
     return false;
   }
   
-  String tempName = json[F(AUTOCONNECT_JSON_KEY_NAME)].as<String>();
+  String tempName = AutoConnectJson::getJsonValue(json, AUTOCONNECT_JSON_KEY_NAME, String());
   if (tempName.length() == 0 || tempName.length() > 64) {
     AC_DBG("Invalid element name length: %u\n", tempName.length());
     return false;
@@ -151,8 +152,8 @@ bool AutoConnectElementJson::_setMember(const JsonObject& json) {
   name = InputSanitizer::sanitizeHTML(tempName);
   
   // Set value if present
-  if (json.containsKey(F(AUTOCONNECT_JSON_KEY_VALUE))) {
-    String tempValue = json[F(AUTOCONNECT_JSON_KEY_VALUE)].as<String>();
+  if (AutoConnectJson::hasJsonKey(json, AUTOCONNECT_JSON_KEY_VALUE)) {
+    String tempValue = AutoConnectJson::getJsonValue(json, AUTOCONNECT_JSON_KEY_VALUE, String());
     if (tempValue.length() > 4096) {
       AC_DBG("Warning: Large value field (%u bytes) in element '%s'\n", 
              tempValue.length(), name.c_str());
@@ -161,8 +162,8 @@ bool AutoConnectElementJson::_setMember(const JsonObject& json) {
   }
   
   // Set posterior tag if present
-  if (json.containsKey(F(AUTOCONNECT_JSON_KEY_POSTERIOR))) {
-    String  posterior = json[F(AUTOCONNECT_JSON_KEY_POSTERIOR)].as<String>();
+  if (AutoConnectJson::hasJsonKey(json, AUTOCONNECT_JSON_KEY_POSTERIOR)) {
+    String  posterior = AutoConnectJson::getJsonValue(json, AUTOCONNECT_JSON_KEY_POSTERIOR, String());
     if (posterior.equalsIgnoreCase(F(AUTOCONNECT_JSON_VALUE_NONE)))
       post = AC_Tag_None;
     else if (posterior.equalsIgnoreCase(F(AUTOCONNECT_JSON_VALUE_BR)))
@@ -179,8 +180,8 @@ bool AutoConnectElementJson::_setMember(const JsonObject& json) {
   }
   
   // Set global flag if present
-  if (json.containsKey(F(AUTOCONNECT_JSON_KEY_GLOBAL))) {
-    global = json[F(AUTOCONNECT_JSON_KEY_GLOBAL)].as<bool>();
+  if (AutoConnectJson::hasJsonKey(json, AUTOCONNECT_JSON_KEY_GLOBAL)) {
+    global = AutoConnectJson::getJsonValue(json, AUTOCONNECT_JSON_KEY_GLOBAL, false);
   }
   
   return true;

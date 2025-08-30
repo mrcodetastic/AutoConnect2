@@ -402,38 +402,37 @@ String AutoConnectUpdateAct::_onCatalog(AutoConnectAux& catalog, PageArgument& a
       responseBody.find(beginOfList);
       do {
         // The size of the JSON buffer is a fixed. It can be a problem
-        // when parsing with ArduinoJson V6. If memory insufficient has
+        // ArduinoJson 7 parsing with proper error handling
+        // when parsing with ArduinoJson V7. If memory insufficient has
         // occurred during the parsing, increase this buffer size.
         ArduinoJsonStaticBuffer<AUTOCONNECT_UPDATE_CATALOG_JSONBUFFER_SIZE> jb;
 
-#if ARDUINOJSON_VERSION_MAJOR<=5
-        ArduinoJsonObject json = jb.parseObject(responseBody);
-        parse = json.success();
-#else
         DeserializationError err = deserializeJson(jb, responseBody);
-        ArduinoJsonObject json = jb.as<JsonObject>();
+        JsonObject json = jb.as<JsonObject>();
         parse = (err == DeserializationError::Ok);
-#endif
+        
         if (parse) {
 #ifdef AC_DEBUG
           AC_DBG_DUMB("\n");
-          ARDUINOJSON_PRINT(json, AC_DEBUG_PORT);
+          serializeJsonPretty(json, AC_DEBUG_PORT);
 #endif
           // Register only bin type file name as available sketch binary to
           // AutoConnectRadio value based on the response from the update server.
           firmwares.order = AC_Horizontal;
-          if (json["type"].as<String>().equalsIgnoreCase("bin")) {
-            firmwares.add(json[F("name")].as<String>());
-            String  attr = String(F("<span>")) + json[F("date")].as<String>() + String(F("</span><span>")) + json[F("time")].as<String>().substring(0, 5) + String(F("</span><span>")) + String(json[F("size")].as<int>()) + String(F("</span>"));
+          if (AutoConnectJson::getJsonValue(json, "type", String()).equalsIgnoreCase("bin")) {
+            firmwares.add(AutoConnectJson::getJsonValue(json, "name", String()));
+            String attr = String(F("<span>")) + 
+                         AutoConnectJson::getJsonValue(json, "date", String()) + 
+                         String(F("</span><span>")) + 
+                         AutoConnectJson::getJsonValue(json, "time", String()).substring(0, 5) + 
+                         String(F("</span><span>")) + 
+                         String(AutoConnectJson::getJsonValue(json, "size", 0)) + 
+                         String(F("</span>"));
             firmwares.tags.push_back(attr);
           }
         }
         else {
-#if ARDUINOJSON_VERSION_MAJOR<=5
-          String  errCaption = String(F("JSON parse error"));
-#else
           String  errCaption = String(err.c_str());
-#endif
           caption.value = String(F("Invalid catalog list:")) + errCaption;
           AC_DBG("JSON:%s\n", errCaption.c_str());
           break;
