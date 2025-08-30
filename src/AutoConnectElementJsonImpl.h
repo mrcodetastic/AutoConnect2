@@ -2,8 +2,8 @@
  * Implementation of AutoConnectElementJson classes.
  * @file AutoConnectElementJsonImpl.h
  * @author hieromon@gmail.com
- * @version  1.3.6
- * @date 2022-07-27
+ * @version  1.4.3
+ * @date 2025-08-30
  * @copyright  MIT license.
  */
 
@@ -11,16 +11,30 @@
 #define _AUTOCONNECTELEMENTJSONIMPL_H_
 
 #include "AutoConnectElementJson.h"
+#include "AutoConnectError.h"
+#include "AutoConnectRAII.h"
 
 /**
- * Returns JSON object size.
+ * Returns JSON object size with safety checks.
  * @return  An object size for JsonBuffer.
  */
 size_t AutoConnectElementJson::getObjectSize(void) const {
+  // Check for potential overflow
   size_t  size = JSON_OBJECT_SIZE(6);
-  size += sizeof(AUTOCONNECT_JSON_KEY_NAME) + sizeof(AUTOCONNECT_JSON_KEY_TYPE) + sizeof(AUTOCONNECT_JSON_KEY_VALUE) + sizeof(AUTOCONNECT_JSON_TYPE_ACELEMENT) + sizeof(AUTOCONNECT_JSON_KEY_GLOBAL);
-  size += name.length() + sizeof('\0') + value.length() + sizeof('\0');
-  size += sizeof(AUTOCONNECT_JSON_KEY_POSTERIOR);
+  size_t  baseSize = sizeof(AUTOCONNECT_JSON_KEY_NAME) + sizeof(AUTOCONNECT_JSON_KEY_TYPE) + 
+                     sizeof(AUTOCONNECT_JSON_KEY_VALUE) + sizeof(AUTOCONNECT_JSON_TYPE_ACELEMENT) + 
+                     sizeof(AUTOCONNECT_JSON_KEY_GLOBAL) + sizeof(AUTOCONNECT_JSON_KEY_POSTERIOR);
+  
+  // Safely add string lengths with overflow protection
+  size_t nameLen = name.length();
+  size_t valueLen = value.length();
+  
+  if (nameLen > 1024 || valueLen > 4096) {
+    AC_DBG("Warning: Large string detected in JSON element - name:%u, value:%u\n", nameLen, valueLen);
+  }
+  
+  size += baseSize + nameLen + sizeof('\0') + valueLen + sizeof('\0');
+  
   size_t  postSize = 0;
   switch (post) {
   case AC_Tag_BR:
@@ -37,21 +51,40 @@ size_t AutoConnectElementJson::getObjectSize(void) const {
     postSize = sizeof(AUTOCONNECT_JSON_VALUE_NONE);
   }
   size += postSize;
+  
+  // Check for reasonable size limits
+  if (size > 8192) {
+    AC_DBG("Warning: Large JSON object size calculated: %u bytes\n", size);
+  }
+  
   return size;
 }
 
 /**
- * Load an element member value from the JSON object.
+ * Load an element member value from the JSON object with validation.
  * @param  json  JSON object with the definition of AutoConnectElement.
- * @return true  AutoConnectElement loaded
- * @return false Type of AutoConnectElement is mismatched.
+ * @return true  AutoConnectElement loaded successfully
+ * @return false Type of AutoConnectElement is mismatched or validation failed.
  */
 bool AutoConnectElementJson::loadMember(const JsonObject& json) {
+  if (!json.containsKey(F(AUTOCONNECT_JSON_KEY_TYPE))) {
+    AC_DBG("JSON object missing required 'type' field\n");
+    return false;
+  }
+  
   String  type = json[F(AUTOCONNECT_JSON_KEY_TYPE)].as<String>();
   if (type.equalsIgnoreCase(F(AUTOCONNECT_JSON_TYPE_ACELEMENT))) {
-    _setMember(json);
+    AC_CHECK_MEMORY(2048); // Warn if memory is low
+    
+    if (!_setMember(json)) {
+      AC_DBG("Failed to set member data for element\n");
+      return false;
+    }
     return true;
   }
+  
+  AC_DBG("Element type mismatch: expected '%s', got '%s'\n", 
+         AUTOCONNECT_JSON_TYPE_ACELEMENT, type.c_str());
   return false;
 }
 
@@ -96,13 +129,38 @@ void AutoConnectElementJson::_serialize(ARDUINOJSON_OBJECT_REFMODIFY JsonObject&
 }
 
 /**
- * Set items common to any type of AutoConnectElement from JSON objects.
+ * Set items common to any type of AutoConnectElement from JSON objects with validation.
  * @param  json  JSON object with the definition of AutoConnectElement.
+ * @return true  Member data set successfully
+ * @return false Validation failed
  */
-void AutoConnectElementJson::_setMember(const JsonObject& json) {
-  name = json[F(AUTOCONNECT_JSON_KEY_NAME)].as<String>();
-  if (json.containsKey(F(AUTOCONNECT_JSON_KEY_VALUE)))
-    value = json[F(AUTOCONNECT_JSON_KEY_VALUE)].as<String>();
+bool AutoConnectElementJson::_setMember(const JsonObject& json) {
+  // Validate and set name
+  if (!json.containsKey(F(AUTOCONNECT_JSON_KEY_NAME))) {
+    AC_DBG("JSON object missing required 'name' field\n");
+    return false;
+  }
+  
+  String tempName = json[F(AUTOCONNECT_JSON_KEY_NAME)].as<String>();
+  if (tempName.length() == 0 || tempName.length() > 64) {
+    AC_DBG("Invalid element name length: %u\n", tempName.length());
+    return false;
+  }
+  
+  // Sanitize the name
+  name = InputSanitizer::sanitizeHTML(tempName);
+  
+  // Set value if present
+  if (json.containsKey(F(AUTOCONNECT_JSON_KEY_VALUE))) {
+    String tempValue = json[F(AUTOCONNECT_JSON_KEY_VALUE)].as<String>();
+    if (tempValue.length() > 4096) {
+      AC_DBG("Warning: Large value field (%u bytes) in element '%s'\n", 
+             tempValue.length(), name.c_str());
+    }
+    value = InputSanitizer::sanitizeHTML(tempValue);
+  }
+  
+  // Set posterior tag if present
   if (json.containsKey(F(AUTOCONNECT_JSON_KEY_POSTERIOR))) {
     String  posterior = json[F(AUTOCONNECT_JSON_KEY_POSTERIOR)].as<String>();
     if (posterior.equalsIgnoreCase(F(AUTOCONNECT_JSON_VALUE_NONE)))
@@ -113,12 +171,19 @@ void AutoConnectElementJson::_setMember(const JsonObject& json) {
       post = AC_Tag_P;
     else if (posterior.equalsIgnoreCase(F(AUTOCONNECT_JSON_VALUE_DIV)))
       post = AC_Tag_DIV;
-    else
-      AC_DBG("Warning '%s' loading, unknown posterior '%s'\n", name.c_str(), posterior.c_str());
+    else {
+      AC_DBG("Warning: Unknown posterior tag '%s' for element '%s'\n", 
+             posterior.c_str(), name.c_str());
+      // Continue with default rather than failing
+    }
   }
+  
+  // Set global flag if present
   if (json.containsKey(F(AUTOCONNECT_JSON_KEY_GLOBAL))) {
     global = json[F(AUTOCONNECT_JSON_KEY_GLOBAL)].as<bool>();
   }
+  
+  return true;
 }
 
 /**
@@ -132,19 +197,38 @@ size_t AutoConnectButtonJson::getObjectSize(void) const {
 }
 
 /**
- * Load a button element attribute member from the JSON object.
+ * Load a button element attribute member from the JSON object with validation.
  * @param  json  JSON object with the definition of AutoConnectElement.
- * @return true  AutoConnectElement loaded
- * @return false Type of AutoConnectElement is mismatched.
+ * @return true  AutoConnectElement loaded successfully
+ * @return false Type of AutoConnectElement is mismatched or validation failed.
  */
 bool AutoConnectButtonJson::loadMember(const JsonObject& json) {
+  if (!json.containsKey(F(AUTOCONNECT_JSON_KEY_TYPE))) {
+    AC_DBG("Button JSON object missing required 'type' field\n");
+    return false;
+  }
+  
   String  type = json[F(AUTOCONNECT_JSON_KEY_TYPE)].as<String>();
   if (type.equalsIgnoreCase(F(AUTOCONNECT_JSON_TYPE_ACBUTTON))) {
-    _setMember(json);
-    if (json.containsKey(F(AUTOCONNECT_JSON_KEY_ACTION)))
-      action = json[F(AUTOCONNECT_JSON_KEY_ACTION)].as<String>();
+    AC_CHECK_MEMORY(1024);
+    
+    if (!_setMember(json)) {
+      return false;
+    }
+    
+    if (json.containsKey(F(AUTOCONNECT_JSON_KEY_ACTION))) {
+      String tempAction = json[F(AUTOCONNECT_JSON_KEY_ACTION)].as<String>();
+      if (tempAction.length() > 256) {
+        AC_DBG("Warning: Large action field (%u bytes) in button '%s'\n", 
+               tempAction.length(), name.c_str());
+      }
+      action = InputSanitizer::sanitizeHTML(tempAction);
+    }
     return true;
   }
+  
+  AC_DBG("Button type mismatch: expected '%s', got '%s'\n", 
+         AUTOCONNECT_JSON_TYPE_ACBUTTON, type.c_str());
   return false;
 }
 

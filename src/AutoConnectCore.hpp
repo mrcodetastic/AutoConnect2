@@ -4,8 +4,8 @@
  * that are limited to AutoConnect basic functionality.
  * @file AutoConnectCore.hpp
  * @author hieromon@gmail.com
- * @version 1.4.2
- * @date 2023-01-25
+ * @version 1.4.3
+ * @date 2025-08-30
  * @copyright MIT license.
  */
 
@@ -15,6 +15,7 @@
 #include <vector>
 #include <memory>
 #include <functional>
+#include <mutex>
 #if defined(ARDUINO_ARCH_ESP8266)
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
@@ -35,6 +36,8 @@ using WebServer = ESP8266WebServer;
 #include "AutoConnectCredential.h"
 #include "AutoConnectTicker.h"
 #include "AutoConnectConfigBase.h"
+#include "AutoConnectError.h"
+#include "AutoConnectRAII.h"
 
 template<typename T>
 class AutoConnectCore {
@@ -52,17 +55,54 @@ class AutoConnectCore {
   AutoConnectCore();
   explicit AutoConnectCore(WebServer& webServer);
   virtual ~AutoConnectCore();
+  
+  // Enhanced API with error handling
+  ACResult beginWithResult(void);
+  ACResult beginWithResult(const char* ssid, const char* passphrase = nullptr, unsigned long timeout = 0);
+  ACResult configWithValidation(T& config);
+  ACResult connectToWiFi(const NetworkConfig& networkConfig);
+  ACResult startCaptivePortal(const PortalConfig& portalConfig = {});
+  
+  // Legacy API for backward compatibility
   bool  begin(void);
   bool  begin(const char* ssid, const char* passphrase = nullptr, unsigned long timeout = 0);
   bool  config(T& config);
   bool  config(const char* ap, const char* password = nullptr);
+  
+  // Enhanced configuration methods
+  ACResult setHostname(const String& hostname);
+  ACResult setStaticIP(const IPAddress& ip, const IPAddress& gateway, const IPAddress& subnet);
+  ACResult setDNS(const IPAddress& dns1, const IPAddress& dns2 = IPAddress());
+  
+  // Memory and diagnostics
+  ACMemoryStats getMemoryStats() const;
+  void logMemoryUsage() const;
+  bool isLowMemory(size_t threshold = 4096) const;
+  
+  // Connection management
   void  disconnect(const bool wifiOff = false, const bool clearConfig = false);
-  inline void disableMenu(const uint16_t items) { _apConfig.menuItems &= (0xffff ^ items); }
-  inline void enableMenu(const uint16_t items) { _apConfig.menuItems |= items; }
+  inline void disableMenu(const uint16_t items) { 
+    std::lock_guard<std::mutex> lock(_configMutex);
+    _apConfig.menuItems &= (0xffff ^ items); 
+  }
+  inline void enableMenu(const uint16_t items) { 
+    std::lock_guard<std::mutex> lock(_configMutex);
+    _apConfig.menuItems |= items; 
+  }
   virtual void  end(void);
-  T&  getConfig(void) { return _apConfig; }
-  bool  getCurrentCredential(station_config_t* staConfig);
-  uint16_t  getEEPROMUsedSize(void);
+  
+  // Const-correct getters
+  const T&  getConfig(void) const { 
+    std::lock_guard<std::mutex> lock(_configMutex);
+    return _apConfig; 
+  }
+  T&  getConfig(void) { 
+    std::lock_guard<std::mutex> lock(_configMutex);
+    return _apConfig; 
+  }
+  
+  bool  getCurrentCredential(station_config_t* staConfig) const;
+  uint16_t  getEEPROMUsedSize(void) const;
   void  handleClient(void);
   void  handleRequest(void);
   void  home(const String& uri);
@@ -130,6 +170,14 @@ class AutoConnectCore {
   void  _waitForEndTransmission(void);
   void  _setReconnect(const AC_STARECONNECT_t order);
 
+  /** Enhanced utilities with validation and safety */
+  ACResult _validateSSID(const String& ssid) const;
+  ACResult _validatePassword(const String& password) const;
+  ACResult _validateHostname(const String& hostname) const;
+  bool _checkMemoryAvailable(size_t required) const;
+  void _updateMemoryStats() const;
+  String _buildHTML(const std::vector<String>& parts) const;
+  
   /** Utilities */
   String              _attachMenuItem(const AC_MENUITEM_t item);
   static uint32_t     _getChipId(void);
@@ -137,12 +185,23 @@ class AutoConnectCore {
   static String       _getSystemUptime(void);
   static String       _toMACAddressString(const uint8_t mac[]);
   static unsigned int _toWiFiQuality(int32_t rssi);
+  
+  /** Thread safety */
+  mutable std::mutex  _configMutex;
+  mutable std::mutex  _credentialMutex;
+  mutable std::mutex  _memoryMutex;
+  
+  /** Callback functions */
   ConnectExit_ft      _onConnectExit;
   DetectExit_ft       _onDetectExit;
   WhileCaptivePortalExit_ft _whileCaptivePortal;
   WhileConnectingExit_ft    _whileConnecting;
   WebServer::THandlerFunction  _notFoundHandler;
-  size_t              _freeHeapSize;
+  
+  /** Memory management */
+  mutable size_t              _freeHeapSize;
+  mutable ACMemoryStats       _memoryStats;
+  std::unique_ptr<MemoryPool> _memoryPool;
 
   /** Servers which works in concert. */
   typedef std::unique_ptr<WebServer, std::function<void(WebServer *)> > WebserverUP;
